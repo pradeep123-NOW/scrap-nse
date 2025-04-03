@@ -1,115 +1,90 @@
 
+import express from 'express';  
+import puppeteer from 'puppeteer-extra';  // Puppeteer for web scraping
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';  // Plugin to evade bot detection
+import cors from 'cors';  
 
-import express from "express";
-import puppeteer from "puppeteer";
+// Enable stealth plugin to bypass bot detection
+puppeteer.use(StealthPlugin());
 
+// Initialize Express app
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;  // Define the server port
 
-app.use(express.json());
+// Middleware setup
+app.use(cors());  
+app.use(express.json());  // Enable JSON parsing in request bodies
 
-// Launch browser once when server starts
-let browser;
-(async () => {
-  browser = await puppeteer.launch({ headless: true });
-  console.log("Browser launched and ready for requests");
-})();
+// Define NSE website URLs
+const NSE_URL = 'https://www.nseindia.com';  // NSE homepage URL
+const NSE_API_URL = 'https://www.nseindia.com/api/corporates-pit';  // API endpoint for corporate actions
 
-app.get("/", (req, res) => {
-  res.send("Server is running");
+// Cookies required for authentication while scraping NSE
+const cookies = [
+    { name: "_ga", value: "GA1.1.120280068.1743424152", domain: ".nseindia.com" },
+    { name: "_ga_E0LYHCLJY3", value: "GS1.1.1743493020.2.1.1743493061.0.0.0", domain: ".nseindia.com" },
+    { name: "nsit", value: "afaezsotGc1MCJ2tzHRKJYQc", domain: ".nseindia.com" },
+    { name: "nseappid", value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGkubnNlIiwiYXVkIjoiYXBpLm5zZSIsImlhdCI6MTc0MzUxMzA2MSwiZXhwIjoxNzQzNTIwMjYxfQ.tp5bCF6IwNRpObZ0YFxPEvr9JZHud6LIfb-KBHB1iqE", domain: ".nseindia.com" },
+    { name: "_ga_87M7PJ3R97", value: "GS1.1.1743510793.8.1.1743513062.54.0.0", domain: ".nseindia.com" },
+    { name: "_ga_WM2NSQKJEK", value: "GS1.1.1743510793.8.1.1743513062.0.0.0", domain: ".nseindia.com" }
+];
+
+// Function to scrape NSE data
+async function fetchNseData() {
+    const browser = await puppeteer.launch({ headless: "new" });  // Launch a new Puppeteer browser instance
+    const page = await browser.newPage();  // Open a new browser page
+
+    try {
+        await page.setCookie(...cookies);  // Set authentication cookies
+
+        await page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9',  // Set request headers
+            'Referer': NSE_URL
+        });
+
+        await page.goto(NSE_URL, { waitUntil: 'domcontentloaded' });  // Navigate to NSE website and wait for DOM to load
+
+        await new Promise(resolve => setTimeout(resolve, 5000));  // Wait for 5 seconds to ensure the page loads completely
+
+        const response = await page.goto(NSE_API_URL);  // Fetch data from NSE API
+        const json = await response.json();  // Parse response as JSON
+
+        // Check if data exists and map it to structured format
+        if (json.data && Array.isArray(json.data)) {
+            let result = json.data.map(item => ({
+                symbol: item.symbol || "N/A",  
+                companyName: item.company || "N/A",  
+                regulation: item.anex || "N/A",  
+                acquirer: item.acqName || "N/A",  
+                securityType: item.secType || "N/A",  
+                noOfSecurities: item.secAcq || "N/A",  
+                acquisitionDisposal: item.tdpTransactionType || "N/A", 
+                date: item.intimDt || "N/A",  
+            }));
+            return result;
+        } else {
+            return { error: "No data found or unexpected API response" };  // Return error if no data is found
+        }
+    } catch (error) {
+        console.error("Error scraping NSE:", error);  // Log scraping errors
+        return { error: "Failed to fetch data" };  // Return error message
+    } finally {
+        await browser.close();  // Close the browser instance
+    }
+}
+
+// Define an API endpoint to get NSE data
+app.get('/api/nse', async (req, res) => {
+    const data = await fetchNseData();  // Call function to fetch data
+    return res.status(200).send({  // Send response to client
+        success: true,
+        message: "Data scrapped successfully",
+        total: data.length,
+        scrapeData: data
+    });
 });
 
-app.get("/scrape", async (req, res) => {
-  const url = "https://www.moneycontrol.com/economic-calendar";
-  let page;
-
-  try {
-    // Create a new page for this request
-    page = await browser.newPage();
-    await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-
-    // Block unnecessary resources to speed up loading
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      const resourceType = req.resourceType();
-      if (["image", "stylesheet", "font"].includes(resourceType)) {
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
-
-    // Navigate with a lighter wait condition and timeout
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
-    await page.waitForSelector("table.eco_tbl", { visible: true, timeout: 10000 });
-
-    // Extract data directly in the browser context
-    const scrapedData = await page.evaluate(() => {
-      const dayAndDate = (document.querySelector("#eDate")?.textContent || "").trim() || "-";
-      const rows = Array.from(document.querySelectorAll("table.eco_tbl tr.tableData"));
-
-      return rows.map((row) => {
-        const time = (row.querySelector(".time")?.textContent || "").trim() || "-";
-
-        // Extract country code (like TUR)
-        const countryCode = Array.from(row.querySelector(".ctry")?.childNodes || [])
-          .filter(node => node.nodeType === Node.TEXT_NODE)
-          .map(node => node.nodeValue.trim())
-          .find(text => text.length > 0) || "-";
-
-        // Extract country name from the <img> tag
-        const countryName = row.querySelector(".ctry img.flag_icon")?.title || "-";
-
-        const eventName = (row.querySelector(".eventName")?.textContent || "").trim() || "-";
-        const impactDiv = row.querySelector("td#imapactTD div");
-        const impact = impactDiv ? impactDiv.className.split(" ") : ["-"];
-
-        const trights = row.querySelectorAll(".tright");
-        const actual = (trights[0]?.querySelector("div.stktodayupdn")?.textContent || "").trim().match(/-?\d+(\.\d+)?%/)?.[0] || "-";
-        const previous = (trights[1]?.querySelector("div.stktodayupdn")?.textContent || "").trim().match(/-?\d+(\.\d+)?%/)?.[0] || "-";
-        const consensus = (trights[2]?.querySelector("div.stktodayupdn")?.textContent || "").trim().match(/-?\d+(\.\d+)?%/)?.[0] || "-";
-
-        return {
-          DayAndDate: dayAndDate,
-          time,
-          countryCode,
-          countryName,
-          eventName,
-          impact,
-          actual,
-          previous,
-          consensus,
-        };
-      });
-    });
-
-    // Close the page to free resources
-    await page.close();
-
-    return res.status(200).send({
-      success: true,
-      message: "Data retrieved successfully",
-      total: scrapedData.length,
-      tableData: scrapedData,
-    });
-  } catch (error) {
-    if (page) await page.close(); // Ensure page is closed on error
-    console.error("Scraping error:", error);
-
-    res.status(500).send({
-      success: false,
-      message: "Error retrieving data",
-      error: error.message,
-    });
-  }
-});
-
-// Graceful shutdown
-process.on("SIGTERM", async () => {
-  if (browser) await browser.close();
-  process.exit(0);
-});
-
+// Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running on http://localhost:${PORT}`);  // Log server startup
 });
