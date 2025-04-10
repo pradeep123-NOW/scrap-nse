@@ -31,7 +31,11 @@ const cookies = [
 
 // Function to scrape NSE data
 async function fetchNseData() {
-    const browser = await puppeteer.launch({ headless: "new" });  // Launch a new Puppeteer browser instance
+    const browser = await puppeteer.launch({
+        executablePath: '/usr/bin/chromium-browser',
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+      });
     const page = await browser.newPage();  // Open a new browser page
 
     try {
