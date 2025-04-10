@@ -9,7 +9,7 @@ puppeteer.use(StealthPlugin());
 
 // Initialize Express app
 const app = express();
-const PORT = process.env.PORT || 3000;  // Define the server port
+const PORT = process.env.PORT || 3002;  // Define the server port
 
 // Middleware setup
 app.use(cors());  
