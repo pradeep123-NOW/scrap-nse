@@ -57,12 +57,12 @@ async function fetchNseData() {
         if (json.data && Array.isArray(json.data)) {
             let result = json.data.map(item => ({
                 symbol: item.symbol || "N/A",  
-                companyName: item.company || "N/A",  
+                company_name: item.company || "N/A",  
                 regulation: item.anex || "N/A",  
                 acquirer: item.acqName || "N/A",  
-                securityType: item.secType || "N/A",  
-                noOfSecurities: item.secAcq || "N/A",  
-                acquisitionDisposal: item.tdpTransactionType || "N/A", 
+                security_type: item.secType || "N/A",  
+                no_of_securities: item.secAcq || "N/A",  
+                acquisition_disposal: item.tdpTransactionType || "N/A", 
                 date: item.intimDt || "N/A",  
             }));
             return result;
